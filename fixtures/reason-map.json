@@ -1,0 +1,25 @@
+{
+  "rules": [
+    {
+      "match": ["payment_cancelled", "payment_cancelled_by_user"],
+      "normalizedReason": "CUSTOMER_CANCELLED"
+    },
+    {
+      "match": ["payment_pending", "timeout", "gateway timeout", "gateway"],
+      "normalizedReason": "ISSUER_TIMEOUT"
+    },
+    {
+      "match": ["insufficient funds", "insufficient_funds"],
+      "normalizedReason": "INSUFFICIENT_FUNDS"
+    },
+    {
+      "match": ["authentication_failed", "payment_authentication"],
+      "normalizedReason": "AUTHENTICATION_FAILED"
+    },
+    {
+      "match": ["bank_not_available", "issuer_down"],
+      "normalizedReason": "ISSUER_DOWNTIME"
+    }
+  ],
+  "default": "GENERIC_FAILURE"
+}

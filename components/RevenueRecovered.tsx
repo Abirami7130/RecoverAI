@@ -1,15 +1,12 @@
-'use client'
+'use client';
 
-import { motion } from 'framer-motion'
-import GlassCard from './GlassCard'
-import { useSimulation } from '@/context/SimulationContext'
+import { motion } from 'framer-motion';
+import GlassCard from './GlassCard';
+import RevenueFigures from './metrics/RevenueFigures';
+import { useSimulation } from '@/context/SimulationContext';
 
 export default function RevenueRecovered() {
-  const {
-    revenueRecovered,
-    transactionsSaved,
-    formatLakhs,
-  } = useSimulation()
+  const { accounting, formatLakhs } = useSimulation();
 
   return (
     <motion.div
@@ -19,7 +16,6 @@ export default function RevenueRecovered() {
       transition={{ duration: 0.8, ease: 'easeOut' }}
       className="w-full max-w-[896px] mx-auto relative z-10"
     >
-      {/* Connecting Gradient Line */}
       <motion.div
         initial={{ scaleY: 0 }}
         whileInView={{ scaleY: 1 }}
@@ -34,56 +30,19 @@ export default function RevenueRecovered() {
       >
         <div className="absolute inset-0 bg-[radial-gradient(circle_at_center,rgba(125,211,252,0.10)_0%,transparent_70%)] pointer-events-none rounded-[12px]" />
 
-        <div className="relative z-10 flex flex-col items-center w-full">
+        <RevenueFigures accounting={accounting} formatLakhs={formatLakhs} />
 
-          <div className="font-sans font-bold text-[12px] leading-[16px] tracking-[1.2px] text-ice-blue uppercase mb-[8px]">
-            REVENUE RECOVERED
-          </div>
-
-          <motion.h2
-            key={revenueRecovered}
-            animate={{
-              textShadow: [
-                '0 0 25px rgba(125,211,252,0.40)',
-                '0 0 35px rgba(125,211,252,0.80)',
-                '0 0 25px rgba(125,211,252,0.40)',
-              ],
-            }}
-            transition={{
-              textShadow: {
-                duration: 4,
-                repeat: Infinity,
-                ease: 'easeInOut',
-              },
-            }}
-            className="font-sans font-bold text-[64px] md:text-[80px] leading-[72px] md:leading-[88px] text-light-ice tracking-[-1.6px]"
-          >
-            ₹{formatLakhs(revenueRecovered)}L
-          </motion.h2>
-
-          <div className="w-[96px] h-[1px] bg-light-ice/30 my-[24px]" />
-
-          <motion.h3
-            key={transactionsSaved}
-            initial={{ opacity: 0.5 }}
-            animate={{ opacity: 1 }}
-            className="font-sans font-semibold text-[24px] md:text-[32px] leading-[32px] md:leading-[40px] text-white text-center mb-[8px]"
-          >
-            {transactionsSaved} transactions saved
-          </motion.h3>
-
-          <motion.p
-            initial={{ opacity: 0 }}
-            whileInView={{ opacity: 1 }}
-            viewport={{ once: true }}
-            transition={{ delay: 0.9, duration: 0.6 }}
-            className="font-sans font-normal text-[16px] md:text-[20px] leading-[24px] md:leading-[32px] text-cool-gray text-center max-w-[600px]"
-          >
-            The intelligence loop identified and automatically converted silent payment failures back into active revenue.
-          </motion.p>
-
-        </div>
+        <motion.p
+          initial={{ opacity: 0 }}
+          whileInView={{ opacity: 1 }}
+          viewport={{ once: true }}
+          transition={{ delay: 0.4, duration: 0.6 }}
+          className="font-sans font-normal text-[15px] leading-[24px] text-cool-gray text-center max-w-[640px] mt-[24px]"
+        >
+          Demo timeline outcomes are simulated. Verified recovered revenue is shown
+          separately and stays at zero until a payment is captured in a later phase.
+        </motion.p>
       </GlassCard>
     </motion.div>
-  )
+  );
 }

@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 
 /**
  * Razorpay types for the browser SDK loaded via checkout.js.
@@ -24,11 +24,13 @@ interface RazorpayOptions {
   modal: {
     ondismiss: () => void;
   };
+  retry?: { enabled: boolean };
 }
 
 interface RazorpayInstance {
   on(event: string, handler: (response: RazorpayFailureResponse) => void): void;
   open(): void;
+  close(): void;
 }
 
 interface RazorpaySuccessResponse {
@@ -69,6 +71,7 @@ const DEMO_AMOUNT_INR = 499;
 export default function CheckoutButton() {
   const [status, setStatus] = useState<CheckoutStatus>('idle');
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
+  const failureHandlingStarted = useRef(false);
 
   const isLoading =
     status === 'creating-order' ||
@@ -105,6 +108,7 @@ export default function CheckoutButton() {
     orderId: string,
     amountInPaise: number
   ) {
+    failureHandlingStarted.current = true;
     setStatus('triggering-ml');
 
     const { error } = failureResponse;
@@ -144,6 +148,7 @@ export default function CheckoutButton() {
   async function startCheckout() {
     setStatus('creating-order');
     setErrorMsg(null);
+    failureHandlingStarted.current = false;
 
     // ── 1. Create a Razorpay order server-side ───────────────────────────────
     const orderRes = await fetch('/api/payment/create-order', {
@@ -196,15 +201,26 @@ export default function CheckoutButton() {
       },
 
       modal: {
-        // User dismissed the modal without paying
         ondismiss: () => {
+          if (failureHandlingStarted.current) {
+            return;
+          }
           setStatus('cancelled');
         },
       },
+
+      // Disable the SDK's built-in retry screen so that our rzp.close()
+      // call in the payment.failed handler is not overridden by the SDK's
+      // own internal "Retry payment" state transition.
+      retry: { enabled: false },
     });
 
     // FAILURE path: capture the Razorpay error and trigger ML recovery
     rzp.on('payment.failed', (response: RazorpayFailureResponse) => {
+      // Defer by one macrotask so the SDK finishes its internal state
+      // transition before we close the modal, avoiding the race where
+      // the SDK's "Retry payment" screen overrides our close call.
+      setTimeout(() => rzp.close(), 0);
       handlePaymentFailure(response, orderData.order_id, orderData.amount);
     });
 

@@ -2,13 +2,9 @@ import pandas as pd
 import joblib
 import os
 
-# 1. Define the path to the saved pipeline
-MODEL_PATH = "ml/models/recoverai_failure_model.joblib"
-
-# Handle path differences depending on whether the script is run from 
-# the root 'RecoverAI' directory or inside the 'src' directory
-if not os.path.exists(MODEL_PATH):
-    MODEL_PATH = "../models/recoverai_failure_model.joblib"
+# 1. Define the absolute path to the saved pipeline relative to this script
+current_dir = os.path.dirname(os.path.abspath(__file__))
+MODEL_PATH = os.path.join(current_dir, "..", "models", "recoverai_failure_model.joblib")
 
 # Load the model globally so it only loads once when this file is imported 
 # by a future backend server (loading models is slow, doing it once is efficient).

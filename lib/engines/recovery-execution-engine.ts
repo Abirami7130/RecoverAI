@@ -1,48 +1,98 @@
 import { RecoveryEvent } from '../types';
+import { resolveTerminalState } from '../recovery/terminal-state';
 
-/**
- * PHASE 2.5: Recovery Execution Engine
- * Deterministically processes a recovery decision through execution states.
- */
-export function executeRecoveryAction(
+function skipsSimulatedExecution(event: RecoveryEvent): boolean {
+  if (event.dataOrigin !== 'razorpay_failure') {
+    return false;
+  }
+
+  const outcome = event.simulatedOutcome?.toLowerCase();
+  const strategy = event.strategy ?? event.decision?.strategy;
+  const action = event.decision?.recommendedAction;
+
+  if (outcome === 'no_action') return true;
+  if (strategy === 'NO_RECOVERY' || strategy === 'MONITOR') return true;
+  if (
+    action === 'NO_ACTION' ||
+    action === 'NO_RECOVERY' ||
+    action === 'MONITOR'
+  ) {
+    return true;
+  }
+
+  return false;
+}
+
+function finishTerminal(
+  event: RecoveryEvent,
+  executionStatus: RecoveryEvent['executionStatus']
+): RecoveryEvent {
+  const terminalState = resolveTerminalState({
+    dataOrigin: event.dataOrigin ?? 'simulation',
+    simulatedOutcome: event.simulatedOutcome,
+    strategy: event.strategy ?? event.decision?.strategy,
+    mlAvailable: event.terminalState !== 'ml_unavailable',
+  });
+
+  return {
+    ...event,
+    step: 5,
+    executionStatus,
+    terminalState,
+  };
+}
+
+function runDemoDelay(
   event: RecoveryEvent,
   currentTimeMs: number
 ): RecoveryEvent {
-  const updatedEvent = { ...event };
-  
-  // If no action is required, immediately resolve
-  if (!updatedEvent.decision || updatedEvent.decision.recommendedAction === 'NO_ACTION') {
-    updatedEvent.executionStatus = 'SUCCESS';
-    updatedEvent.step = 5;
-    return updatedEvent;
-  }
+  const updatedEvent: RecoveryEvent = { ...event };
 
-  // Initialize execution state machine
   if (!updatedEvent.executionStatus || updatedEvent.executionStatus === 'IDLE') {
     updatedEvent.executionStatus = 'SCHEDULED';
     updatedEvent.executionStartTime = currentTimeMs;
   }
 
-  const elapsedMs = currentTimeMs - (updatedEvent.executionStartTime || currentTimeMs);
-  
-  // Note: For demo purposes, we scale down very long simulated delays (like 5 minutes) 
-  // to a maximum of 8 seconds so the UI simulation completes visually without hanging.
-  const simulatedDelayMs = Math.min(updatedEvent.decision.retryDelayMs, 8000);
+  const elapsedMs =
+    currentTimeMs - (updatedEvent.executionStartTime || currentTimeMs);
+  const simulatedDelayMs = Math.min(
+    updatedEvent.decision?.retryDelayMs ?? 8000,
+    8000
+  );
 
   if (updatedEvent.executionStatus === 'SCHEDULED') {
-    // Wait for the requested retry delay
     if (elapsedMs >= simulatedDelayMs) {
       updatedEvent.executionStatus = 'EXECUTING';
-      updatedEvent.executionStartTime = currentTimeMs; // Reset timer for execution duration
+      updatedEvent.executionStartTime = currentTimeMs;
     }
-  } 
-  else if (updatedEvent.executionStatus === 'EXECUTING') {
-    // Simulate 2 seconds of active network/processing time for the fallback payment attempt
+    return updatedEvent;
+  }
+
+  if (updatedEvent.executionStatus === 'EXECUTING') {
     if (elapsedMs >= 2000) {
-      updatedEvent.executionStatus = 'SUCCESS';
-      updatedEvent.step = 5; // Triggers the final RECOVERED visual state in the UI
+      const executionStatus =
+        updatedEvent.dataOrigin === 'razorpay_failure' &&
+        updatedEvent.simulatedOutcome?.toLowerCase() !== 'recovered'
+          ? 'FAILED'
+          : 'SUCCESS';
+      return finishTerminal(updatedEvent, executionStatus);
     }
   }
 
   return updatedEvent;
+}
+
+/**
+ * Advances in-memory recovery execution using Python simulated outcomes only.
+ * Timers never imply a verified Razorpay capture.
+ */
+export function executeRecoveryAction(
+  event: RecoveryEvent,
+  currentTimeMs: number
+): RecoveryEvent {
+  if (skipsSimulatedExecution(event)) {
+    return finishTerminal(event, 'SUCCESS');
+  }
+
+  return runDemoDelay(event, currentTimeMs);
 }
