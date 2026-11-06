@@ -17,7 +17,11 @@ import sys
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 
 
-def decide_recovery(transaction_data: dict, prediction_result: dict) -> dict:
+def decide_recovery(
+    transaction_data: dict,
+    prediction_result: dict,
+    elevation_threshold_rupees: float = 5000.0,
+) -> dict:
     """Determines the recovery decision and priority for a payment transaction.
 
     Combines baseline ML failure probability with financial exposure calculation
@@ -57,12 +61,16 @@ def decide_recovery(transaction_data: dict, prediction_result: dict) -> dict:
     # =========================================================================
     if failure_prob < 0.25:
         baseline_decision = "NO_ACTION"
+        base_rule_id = "BASE_NO_ACTION"
     elif failure_prob < 0.60:
         baseline_decision = "MONITOR"
+        base_rule_id = "BASE_MONITOR"
     elif failure_prob < 0.85:
         baseline_decision = "RECOVERY_ATTEMPT"
+        base_rule_id = "BASE_RECOVERY_ATTEMPT"
     else:
         baseline_decision = "PRIORITY_RECOVERY"
+        base_rule_id = "BASE_PRIORITY"
 
     # =========================================================================
     # 3. REVENUE-AWARE OVERRIDE POLICY
@@ -72,13 +80,17 @@ def decide_recovery(transaction_data: dict, prediction_result: dict) -> dict:
     final_decision = baseline_decision
     elevated = False
 
-    if failure_prob >= 0.25 and revenue_at_risk >= 5000.0:
+    rule_ids = [base_rule_id]
+
+    if failure_prob >= 0.25 and revenue_at_risk >= elevation_threshold_rupees:
         if baseline_decision == "MONITOR":
             final_decision = "RECOVERY_ATTEMPT"
             elevated = True
+            rule_ids = ["BASE_MONITOR", "ELEVATED_FOR_EXPOSURE"]
         elif baseline_decision == "RECOVERY_ATTEMPT":
             final_decision = "PRIORITY_RECOVERY"
             elevated = True
+            rule_ids = ["BASE_RECOVERY_ATTEMPT", "ELEVATED_FOR_EXPOSURE"]
         # PRIORITY_RECOVERY is already the maximum decision tier
 
     # =========================================================================
@@ -115,19 +127,13 @@ def decide_recovery(transaction_data: dict, prediction_result: dict) -> dict:
     if elevated:
         reasons.append(
             f"Decision elevated to {final_decision} due to high expected financial exposure "
-            f"(Revenue at Risk: ₹{revenue_at_risk:,.2f} >= ₹5,000.00 threshold)."
+            f"(Revenue at Risk: ₹{revenue_at_risk:,.2f} >= ₹{elevation_threshold_rupees:,.2f} threshold)."
         )
-    elif amount >= 5000.0:
-        if failure_prob < 0.25:
-            reasons.append(
-                f"High transaction value detected (₹{amount:,.2f}), but failure probability ({failure_prob:.2%}) "
-                "is below intervention threshold (0.25). Remained NO_ACTION."
-            )
-        else:
-            reasons.append(
-                f"High transaction value (₹{amount:,.2f}), but expected revenue at risk "
-                f"(₹{revenue_at_risk:,.2f}) did not exceed the ₹5,000 elevation threshold."
-            )
+    elif amount * failure_prob >= elevation_threshold_rupees * 0.5 and failure_prob >= 0.25:
+        reasons.append(
+            f"Expected revenue at risk (₹{revenue_at_risk:,.2f}) did not exceed the "
+            f"₹{elevation_threshold_rupees:,.2f} elevation threshold."
+        )
 
     # Retry count context
     if retry_count >= 2:
@@ -144,6 +150,11 @@ def decide_recovery(transaction_data: dict, prediction_result: dict) -> dict:
     reason_text = " ".join(reasons)
 
     # Return standardized decision payload
+    if elevated and "ELEVATED_FOR_EXPOSURE" not in rule_ids:
+        rule_ids.append("ELEVATED_FOR_EXPOSURE")
+    if final_decision == "PRIORITY_RECOVERY" and "BASE_PRIORITY" not in rule_ids:
+        rule_ids = ["BASE_PRIORITY"] + [r for r in rule_ids if r != base_rule_id]
+
     return {
         "failure_probability": round(failure_prob, 4),
         "risk_level": risk_level,
@@ -152,6 +163,7 @@ def decide_recovery(transaction_data: dict, prediction_result: dict) -> dict:
         "recommended_action": recommended_action,
         "priority": priority,
         "reason": reason_text,
+        "rule_ids": rule_ids,
     }
 
 

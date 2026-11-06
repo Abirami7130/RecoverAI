@@ -86,8 +86,9 @@ export default function SolutionSection() {
 
           <p className="mt-[16px] max-w-[650px] font-sans text-[15px] md:text-[17px] leading-[26px] text-cool-gray">
             RecoverAI continuously monitors payment-provider signals,
-            predicts failure risk, and automatically activates the
-            appropriate recovery path.
+            predicts failure risk, and runs a labeled demo animation on the
+            landing timeline. Live checkout failures use the Python recovery
+            policy when FastAPI is available.
           </p>
         </motion.div>
 

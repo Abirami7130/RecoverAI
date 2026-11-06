@@ -1,5 +1,6 @@
 'use client';
 
+import React from 'react';
 import { RecoveryAccounting } from '@/lib/types';
 
 interface RevenueFiguresProps {

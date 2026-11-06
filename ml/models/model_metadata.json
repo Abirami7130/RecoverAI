@@ -1,4 +1,6 @@
 {
+    "model_version": "gb-2026-10-30-synthetic",
+    "dataset": "synthetic_v1",
     "model_type": "GradientBoostingClassifier",
     "n_estimators": 200,
     "learning_rate": 0.05,
@@ -7,9 +9,19 @@
     "operating_threshold": 0.25,
     "roc_auc_test": 0.7897,
     "average_precision_test": 0.5592,
-    "brier_score_test": 0.1163,
+    "brier_score_test": 0.11664196995306984,
     "best_test_f1": 0.5256,
     "best_test_f1_threshold": 0.25,
     "training_rows": 50000,
-    "target": "payment_failed"
+    "row_count": 50000,
+    "target": "payment_failed",
+    "split": {
+        "test_size": 0.2,
+        "random_state": 42,
+        "stratify": true
+    },
+    "brier_score_test_uncalibrated": 0.11664196995306984,
+    "brier_score_test_calibrated": 0.11687590542997048,
+    "generatedAt": "2026-11-01T12:04:49.639611+00:00",
+    "calibration": "not_adopted"
 }

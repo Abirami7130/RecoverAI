@@ -1,5 +1,6 @@
 'use client'
 import { useState } from 'react'
+import Link from 'next/link'
 import { motion, AnimatePresence } from 'framer-motion'
 
 export default function Navigation() {
@@ -19,6 +20,9 @@ export default function Navigation() {
           <a href="#solution" className="text-cool-gray text-[16px] leading-[24px] hover:text-white transition-colors duration-200">The Solution</a>
           <a href="#experience" className="text-cool-gray text-[16px] leading-[24px] hover:text-white transition-colors duration-200">Product Experience</a>
           <a href="#revenue" className="text-cool-gray text-[16px] leading-[24px] hover:text-white transition-colors duration-200">Revenue Impact</a>
+          <Link href="/login" className="text-app-accent text-[16px] leading-[24px] hover:text-white transition-colors duration-200 font-medium">
+            Console
+          </Link>
         </div>
         
         {/* Desktop CTA */}

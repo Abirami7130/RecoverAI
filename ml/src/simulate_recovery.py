@@ -11,54 +11,10 @@ try:
     from predict_failure import predict_failure
     from recovery_decision import decide_recovery
     from recovery_strategy import recommend_recovery_strategy
-except ImportError:
-    # Safe fallbacks in case imports are accessed from outside standard directory structure
-    def predict_failure(tx_data):
-        prob = tx_data.get("mock_prob", 0.20)
-        risk = (
-            "low"
-            if prob < 0.25
-            else ("medium" if prob < 0.60 else "high")
-        )
-        return {"failure_probability": prob, "risk_level": risk}
-
-    def decide_recovery(tx_data, pred_result):
-        prob = pred_result["failure_probability"]
-        if prob < 0.25:
-            return {"decision": "NO_ACTION", "priority": "LOW"}
-        elif prob < 0.50:
-            return {"decision": "MONITOR", "priority": "MEDIUM"}
-        elif prob < 0.75:
-            return {"decision": "RECOVERY_ATTEMPT", "priority": "HIGH"}
-        else:
-            return {"decision": "PRIORITY_RECOVERY", "priority": "CRITICAL"}
-
-    def recommend_recovery_strategy(tx_data, decision_res):
-        dec = decision_res["decision"]
-        if dec in ["NO_ACTION", "MONITOR"]:
-            return {
-                "strategy": "NONE",
-                "recommended_delay_minutes": 0,
-                "max_attempts_remaining": 0,
-            }
-        elif dec == "PRIORITY_RECOVERY":
-            return {
-                "strategy": "PRIORITY_RECOVERY",
-                "recommended_delay_minutes": 15,
-                "max_attempts_remaining": 1,
-            }
-        else:
-            if tx_data.get("retry_count", 0) >= 2:
-                return {
-                    "strategy": "ALTERNATIVE_PAYMENT_METHOD",
-                    "recommended_delay_minutes": 60,
-                    "max_attempts_remaining": 1,
-                }
-            return {
-                "strategy": "SMART_RETRY",
-                "recommended_delay_minutes": 30,
-                "max_attempts_remaining": 2,
-            }
+except ImportError as e:
+    raise ImportError(
+        "RecoverAI simulation requires predict_failure, recovery_decision, and recovery_strategy."
+    ) from e
 
 
 # ==============================================================================
@@ -79,7 +35,8 @@ def simulate_recovery(
     payment_id = str(transaction_data.get("payment_id", "tx_unknown"))
     retry_count = int(transaction_data.get("retry_count", 0))
 
-    failure_prob = float(prediction_result.get("failure_probability", 0.0))
+    raw_prob = prediction_result.get("failure_probability")
+    failure_prob = float(raw_prob if raw_prob is not None else 0.0)
     decision = decision_result.get("decision", "NO_ACTION")
     strategy = strategy_result.get("strategy", "NONE")
 

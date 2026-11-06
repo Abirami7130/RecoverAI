@@ -4,6 +4,7 @@ export interface ProviderMetrics {
   errorRate: number;
   timeoutRate: number;
   volume: number;
+  source?: 'simulated' | 'unavailable';
 }
 
 export type RiskLevel = 'LOW' | 'MEDIUM' | 'HIGH';
@@ -70,6 +71,8 @@ export interface RecoveryDecision {
   simulatedRecoveryProbability?: number;
   /** @deprecated Phase 1 — use failureProbability */
   confidence?: number;
+  ruleIds?: string[];
+  demoAnimation?: boolean;
 }
 
 export interface RecoveryEvent {

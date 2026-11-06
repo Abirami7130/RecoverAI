@@ -1,11 +1,20 @@
 import { MonitoringState, RecoveryDecision, RecoveryEvent } from '../types';
 import { calculateRiskScore, getRiskLevel } from './risk-engine';
-import { makeRecoveryDecision } from './recovery-decision-engine';
 import { executeRecoveryAction } from './recovery-execution-engine';
 import {
   applySessionCredit,
   createInitialAccounting,
 } from '../recovery/accounting';
+
+const DEMO_ANIMATION_DECISION: RecoveryDecision = {
+  failureReason: 'SIMULATED_DEGRADATION',
+  diagnosis: 'Demo animation. This action was not chosen by the recovery policy.',
+  recommendedAction: 'MONITOR',
+  actionLabel: 'Demo animation only',
+  retryDelayMs: 0,
+  useAlternateRoute: false,
+  demoAnimation: true,
+};
 
 class SimulationService {
   private accounting = createInitialAccounting();
@@ -17,6 +26,7 @@ class SimulationService {
       errorRate: 0.5,
       timeoutRate: 0.3,
       volume: 15420,
+      source: 'simulated',
     },
     riskScore: 5,
     riskLevel: 'LOW',
@@ -32,25 +42,9 @@ class SimulationService {
       dataOrigin: 'simulation',
       terminalState: 'simulated_demo_complete',
       errorDescription: 'Simulated provider degradation',
-      decision: {
-        failureReason: 'HIGH_LATENCY_TIMEOUT',
-        diagnosis: 'Payment provider experiencing elevated latency',
-        recommendedAction: 'DELAYED_RETRY',
-        actionLabel: 'Delayed retry',
-        retryDelayMs: 60000,
-        useAlternateRoute: false,
-        confidence: 0.85,
-      },
+      decision: DEMO_ANIMATION_DECISION,
     },
-    latestDecision: {
-      failureReason: 'OPTIMAL_OPERATIONS',
-      diagnosis: 'Payment provider metrics within optimal operating thresholds.',
-      recommendedAction: 'NO_ACTION',
-      actionLabel: 'No recovery action required',
-      retryDelayMs: 0,
-      useAlternateRoute: false,
-      confidence: 0.98,
-    },
+    latestDecision: DEMO_ANIMATION_DECISION,
     timestamp: Date.now(),
   };
 
@@ -110,6 +104,7 @@ class SimulationService {
       errorRate: isDegraded ? 4 + Math.random() * 3 : 0.4 + Math.random() * 0.5,
       timeoutRate: isDegraded ? 2.5 + Math.random() * 2 : 0.2 + Math.random() * 0.3,
       volume: this.state.metrics.volume + Math.floor(Math.random() * 5),
+      source: 'simulated',
     };
   }
 
@@ -121,13 +116,8 @@ class SimulationService {
   private processRecoveryEngine() {
     const now = Date.now();
 
-    const currentDecision = makeRecoveryDecision(
-      this.state.metrics,
-      this.state.riskScore,
-      this.state.riskLevel
-    );
     if (!this.realEventActive) {
-      this.state.latestDecision = currentDecision;
+      this.state.latestDecision = DEMO_ANIMATION_DECISION;
     }
 
     if (
@@ -146,7 +136,7 @@ class SimulationService {
         executionStatus: 'IDLE',
         dataOrigin: 'simulation',
         errorDescription: 'Simulated provider degradation',
-        decision: currentDecision,
+        decision: DEMO_ANIMATION_DECISION,
       };
       return;
     }

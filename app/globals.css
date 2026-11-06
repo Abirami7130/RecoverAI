@@ -4,6 +4,17 @@
 
 :root {
   color-scheme: dark;
+  --bg: #F6F1E8;
+  --bg-elevated: #FFFBF5;
+  --bg-muted: #EFE6D9;
+  --ink: #2A241E;
+  --ink-soft: #5C5146;
+  --line: #E2D5C5;
+  --accent: #8C5E3C;
+  --accent-ink: #FFFBF5;
+  --danger: #8F3D32;
+  --ok: #3E5C45;
+  --sim: #8A6A32;
 }
 
 html {

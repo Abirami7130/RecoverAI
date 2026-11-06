@@ -160,6 +160,10 @@ Failed Interventions
 
 The system can also compare a baseline recovery policy against the RecoverAI policy.
 
+Phase 5 adds verified `TrainingExample` storage, export/retrain scripts, held-out calibration metadata, and a baseline comparison script. See [docs/phase5-ml.md](docs/phase5-ml.md).
+
+Failure probabilities come from a gradient boosting model trained on 50,000 synthetic payments. They are not a measured live recovery rate.
+
 🖥️ Dashboard
 
 The RecoverAI interface is designed as a desktop-first fintech operations dashboard.
@@ -259,8 +263,32 @@ RecoverAI/
 │   ├── reports/          # Evaluation plots
 │   └── src/              # ML pipeline
 ├── public/               # Static assets
+├── docs/
+│   └── phase2-operations.md  # Phase 2 DB, env, worker setup
 ├── ML_ROADMAP.md         # ML architecture & roadmap
 └── package.json
+
+## Phase 2 local setup (persistence & worker)
+
+Phase 2 adds SQLite persistence, Razorpay webhooks, and a background recovery worker. Full operational steps (environment variables, migrations, seed, Next.js, worker, deployment limits) are documented in **[docs/phase2-operations.md](docs/phase2-operations.md)**.
+
+Quick start after clone:
+
+```bash
+cp .env.example .env.local   # edit as needed; use RAZORPAY_USE_FAKE=true without keys
+npm install
+npm run db:migrate
+npm run db:seed
+npm run dev
+```
+
+## Operator console (Phase 4)
+
+After seeding with `SEED_ADMIN_EMAIL` and `SEED_ADMIN_PASSWORD` in `.env.local`, sign in at `/login` and open `/app` for the case queue, analytics (verified vs simulated), audit trail, and read-only policy.
+
+Optional read-only account: set `SEED_VIEWER_EMAIL` and `SEED_VIEWER_PASSWORD` in the seed environment. Viewers can browse cases but cannot `POST` manual retries.
+
+Requires `AUTH_SECRET` (or `NEXTAUTH_SECRET`) and `NEXTAUTH_URL=http://localhost:3000` for local Auth.js sessions.
 
 🗺️ Roadmap
 

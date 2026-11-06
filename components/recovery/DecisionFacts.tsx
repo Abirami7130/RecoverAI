@@ -1,6 +1,7 @@
 'use client';
 
 import { RecoveryDecision } from '@/lib/types';
+import { sentencesForRuleIds } from '@/lib/recovery/rule-glossary';
 
 interface DecisionFactsProps {
   decision: RecoveryDecision;
@@ -11,12 +12,30 @@ export default function DecisionFacts({ decision }: DecisionFactsProps) {
     decision.strategy ?? decision.recommendedAction ?? 'UNKNOWN';
   const failureProbability = decision.failureProbability;
   const simulatedRecoveryProbability = decision.simulatedRecoveryProbability;
+  const ruleSentences = decision.ruleIds?.length
+    ? sentencesForRuleIds(decision.ruleIds)
+    : [];
 
   return (
     <div className="mt-[8px] bg-light-ice/10 border border-light-ice/20 rounded-[8px] p-[16px] flex flex-col gap-[12px]">
       <p className="font-sans font-medium text-[14px] leading-[20px] text-dark-navy">
-        {decision.diagnosis}
+        {decision.demoAnimation
+          ? 'Demo animation. This action was not chosen by the recovery policy.'
+          : decision.diagnosis}
       </p>
+
+      {ruleSentences.length > 0 && (
+        <ul className="flex flex-col gap-[4px] list-disc pl-[18px]">
+          {ruleSentences.map((sentence) => (
+            <li
+              key={sentence}
+              className="font-sans font-medium text-[12px] leading-[16px] text-dark-navy/80"
+            >
+              {sentence}
+            </li>
+          ))}
+        </ul>
+      )}
 
       <div className="flex flex-col gap-[4px] pt-[12px] border-t border-light-ice/20">
         <span className="font-sans font-bold text-[12px] leading-[16px] tracking-[1.2px] text-ice-blue uppercase">

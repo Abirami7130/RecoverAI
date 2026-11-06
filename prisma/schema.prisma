@@ -1,0 +1,238 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+model Merchant {
+  id          String           @id @default(cuid())
+  name        String
+  createdAt   DateTime         @default(now())
+  updatedAt   DateTime         @updatedAt
+  customers   Customer[]
+  payments    Payment[]
+  cases       RecoveryCase[]
+  policies    MerchantPolicy[]
+  auditLogs   AuditLog[]
+  memberships Membership[]
+}
+
+model User {
+  id           String       @id @default(cuid())
+  email        String       @unique
+  name         String
+  passwordHash String
+  createdAt    DateTime     @default(now())
+  memberships  Membership[]
+}
+
+model Membership {
+  id         String   @id @default(cuid())
+  userId     String
+  merchantId String
+  role       String
+  createdAt  DateTime @default(now())
+  user       User     @relation(fields: [userId], references: [id])
+  merchant   Merchant @relation(fields: [merchantId], references: [id])
+
+  @@unique([userId, merchantId])
+  @@index([merchantId])
+}
+
+model Customer {
+  id                 String         @id @default(cuid())
+  merchantId         String
+  externalRef        String
+  subscriptionStatus String         @default("active")
+  tenureStartedAt    DateTime?
+  createdAt          DateTime       @default(now())
+  merchant           Merchant       @relation(fields: [merchantId], references: [id])
+  payments           Payment[]
+  cases              RecoveryCase[]
+
+  @@unique([merchantId, externalRef])
+  @@index([merchantId])
+}
+
+model Payment {
+  id                  String           @id @default(cuid())
+  merchantId          String
+  customerId          String?
+  razorpayOrderId     String           @unique
+  razorpayPaymentId   String?          @unique
+  amountPaise         Int
+  currency            String           @default("INR")
+  status              String
+  method              String?
+  parentPaymentId     String?
+  recoveryCaseId      String?
+  createIdempotencyKey String?         @unique
+  capturedAt          DateTime?
+  createdAt           DateTime         @default(now())
+  updatedAt           DateTime         @updatedAt
+  merchant            Merchant         @relation(fields: [merchantId], references: [id])
+  customer            Customer?        @relation(fields: [customerId], references: [id])
+  recoveryCase        RecoveryCase?    @relation(fields: [recoveryCaseId], references: [id])
+  failures            PaymentFailure[]
+
+  @@index([merchantId, status])
+  @@index([recoveryCaseId])
+}
+
+model PaymentFailure {
+  id               String   @id @default(cuid())
+  paymentId        String
+  source           String
+  errorCode        String?
+  errorReason      String?
+  errorDescription String?
+  normalizedReason String
+  rawEventId       String?  @unique
+  occurredAt       DateTime
+  createdAt        DateTime @default(now())
+  payment          Payment  @relation(fields: [paymentId], references: [id])
+
+  @@index([paymentId])
+  @@index([normalizedReason])
+}
+
+model RecoveryCase {
+  id                     String                   @id @default(cuid())
+  merchantId             String
+  customerId             String?
+  originPaymentId        String                   @unique
+  status                 String
+  amountPaise            Int
+  openedAt               DateTime                 @default(now())
+  closedAt               DateTime?
+  closeReason            String?
+  verifiedRecoveredPaise Int                      @default(0)
+  merchant               Merchant                 @relation(fields: [merchantId], references: [id])
+  customer               Customer?                @relation(fields: [customerId], references: [id])
+  payments               Payment[]
+  predictions            MlPrediction[]
+  decisions              RecoveryDecisionRecord[]
+  attempts               RecoveryAttempt[]
+
+  @@index([merchantId, status])
+}
+
+model MlPrediction {
+  id                        String       @id @default(cuid())
+  caseId                    String
+  modelVersion              String
+  failureProbability        Float
+  riskLevel                 String
+  recoveryProbability       Float?
+  recoveryProbabilitySource String?
+  featureJson               String
+  createdAt                 DateTime     @default(now())
+  recoveryCase              RecoveryCase @relation(fields: [caseId], references: [id])
+
+  @@index([caseId])
+}
+
+model RecoveryDecisionRecord {
+  id                   String       @id @default(cuid())
+  caseId               String
+  predictionId         String?
+  action               String
+  priority             String
+  revenueAtRiskPaise   Int
+  delayMinutes         Int?
+  maxAttemptsRemaining Int
+  guardrailResult      String
+  reasonText           String
+  ruleIdsJson          String
+  simulatedOutcome     String?
+  simulatedProbability Float?
+  policyId             String?
+  recommendedMethod    String?
+  createdAt            DateTime     @default(now())
+  recoveryCase         RecoveryCase @relation(fields: [caseId], references: [id])
+
+  @@index([caseId])
+}
+
+model RecoveryAttempt {
+  id              String       @id @default(cuid())
+  caseId          String
+  decisionId      String
+  idempotencyKey  String       @unique
+  status          String
+  scheduledFor    DateTime
+  startedAt       DateTime?
+  finishedAt      DateTime?
+  razorpayOrderId String?
+  resultPaymentId String?
+  blockReason     String?
+  createdAt       DateTime     @default(now())
+  updatedAt       DateTime     @updatedAt
+  recoveryCase    RecoveryCase @relation(fields: [caseId], references: [id])
+
+  @@index([status, scheduledFor])
+  @@index([caseId])
+}
+
+model WebhookEvent {
+  id               String    @id @default(cuid())
+  provider         String    @default("razorpay")
+  providerEventId  String    @unique
+  eventType        String
+  signatureValid   Boolean
+  processingStatus String
+  payloadJson      String
+  receivedAt       DateTime  @default(now())
+  processedAt      DateTime?
+
+  @@index([eventType, processingStatus])
+}
+
+model AuditLog {
+  id           String    @id @default(cuid())
+  merchantId   String?
+  actorType    String
+  actorId      String?
+  action       String
+  entityType   String
+  entityId     String
+  metadataJson String
+  createdAt    DateTime  @default(now())
+  merchant     Merchant? @relation(fields: [merchantId], references: [id])
+
+  @@index([entityType, entityId])
+  @@index([merchantId, createdAt])
+}
+
+model MerchantPolicy {
+  id                          String   @id @default(cuid())
+  merchantId                  String
+  version                     Int
+  active                      Boolean  @default(false)
+  maxAttempts                 Int      @default(3)
+  minCooldownMinutes          Int      @default(15)
+  elevationRevenueAtRiskPaise Int      @default(500000)
+  approvalThresholdPaise      Int?
+  retryCancelledSubscriptions Boolean  @default(false)
+  disabledReasonCodesJson     String   @default("[]")
+  createdAt                   DateTime @default(now())
+  merchant                    Merchant @relation(fields: [merchantId], references: [id])
+
+  @@unique([merchantId, version])
+  @@index([merchantId, active])
+}
+
+model TrainingExample {
+  id              String   @id @default(cuid())
+  caseId          String
+  attemptId       String   @unique
+  featureJson     String
+  action          String
+  verifiedSuccess Boolean
+  createdAt       DateTime @default(now())
+
+  @@index([verifiedSuccess])
+}

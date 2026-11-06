@@ -23,59 +23,26 @@ sys.path.append(current_dir)
 
 # Import existing modular components without duplicating logic
 try:
-    from predict_failure import predict_failure
-    from recovery_decision import decide_recovery
-    from recovery_strategy import recommend_recovery_strategy
-    from simulate_recovery import simulate_recovery
+    from guardrails import evaluate_recovery_case
 except ImportError as e:
     print(f"Error importing required modules: {e}")
-    print("Ensure predict_failure.py, recovery_decision.py, recovery_strategy.py, and simulate_recovery.py are in ml/src/.")
     raise
 
 
-def run_recoverai_pipeline(transaction_data):
+def run_recoverai_pipeline(transaction_data, context=None, policy=None):
     """
     Runs the complete RecoverAI end-to-end recovery pipeline for a given transaction.
 
     Args:
         transaction_data (dict): Raw transaction data dictionary containing features
                                  available BEFORE a payment outcome is known.
+        context (dict): Optional guardrail context (normalized_reason, attempts_used, etc.)
+        policy (dict): Optional merchant policy overrides.
 
     Returns:
-        dict: A structured dictionary containing the transaction, prediction,
-              decision, strategy, and simulated outcome.
+        dict: prediction, decision, strategy, guardrail, and simulated outcome.
     """
-    # Step 1: Run ML Failure Prediction
-    # Calls the prediction model to determine failure probability and risk tier
-    prediction_result = predict_failure(transaction_data)
-
-    # Step 2: Run Revenue-Aware Decision Engine
-    # Combines prediction results with transaction financial data (amount)
-    decision_result = decide_recovery(transaction_data, prediction_result)
-
-    # Step 3: Run Recovery Strategy Engine
-    # Determines the appropriate recovery tactic, delay, and retry limits
-    strategy_result = recommend_recovery_strategy(transaction_data, decision_result)
-
-    # Step 4: Run Recovery Outcome Simulation
-    # Simulates whether the recovery strategy will succeed
-    outcome_result = simulate_recovery(
-        transaction_data,
-        prediction_result,
-        decision_result,
-        strategy_result
-    )
-
-    # Assemble and return the complete end-to-end pipeline trace
-    pipeline_result = {
-        "transaction": transaction_data,
-        "prediction": prediction_result,
-        "decision": decision_result,
-        "strategy": strategy_result,
-        "outcome": outcome_result
-    }
-
-    return pipeline_result
+    return evaluate_recovery_case(transaction_data, context=context, policy=policy)
 
 
 def print_pipeline_trace(result):

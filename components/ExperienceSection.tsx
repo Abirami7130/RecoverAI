@@ -27,6 +27,10 @@ export default function ExperienceSection() {
           </h2>
         </motion.div>
 
+        <p className="font-sans text-[14px] text-cool-gray/90 mt-[12px] max-w-[640px] text-center">
+          Demo timeline. Captured revenue is shown separately inside the console.
+        </p>
+
         <LiveRecoveryPath />
 
         {/* Final CTA within Experience Section */}

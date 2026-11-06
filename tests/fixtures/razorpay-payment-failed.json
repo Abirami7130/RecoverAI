@@ -1,0 +1,20 @@
+{
+  "id": "evt_test_failed_001",
+  "event": "payment.failed",
+  "created_at": 1730260800,
+  "payload": {
+    "payment": {
+      "entity": {
+        "id": "pay_test_failed_001",
+        "order_id": "order_replace_me",
+        "amount": 49900,
+        "currency": "INR",
+        "status": "failed",
+        "error_code": "BAD_REQUEST_ERROR",
+        "error_description": "Payment failed",
+        "error_reason": "payment_failed",
+        "method": "upi"
+      }
+    }
+  }
+}

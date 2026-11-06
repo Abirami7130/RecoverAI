@@ -1,6 +1,10 @@
 # ml/src/recovery_strategy.py
 
-def recommend_recovery_strategy(transaction_data, decision_result):
+def recommend_recovery_strategy(
+    transaction_data,
+    decision_result,
+    max_attempts: int = 3,
+):
     """
     RecoverAI Smart Recovery Strategy and Timing Layer (Step 10).
     
@@ -72,7 +76,7 @@ def recommend_recovery_strategy(transaction_data, decision_result):
         base_reason = "Unrecognized decision category."
 
     # 3. Calculate maximum remaining retry attempts
-    max_attempts_remaining = max(0, 3 - retry_count)
+    max_attempts_remaining = max(0, max_attempts - retry_count)
     
     # 4. Build contextual reasoning layers
     reasons = [base_reason]
@@ -85,11 +89,7 @@ def recommend_recovery_strategy(transaction_data, decision_result):
         
     if prob >= 0.85:
         reasons.append("High alert: Transaction exhibits very high predicted failure risk.")
-        
-    if amount >= 500.0:
-        reasons.append(f"High revenue exposure detected (Amount: {amount:.2f}).")
-        
-    # Combine reasons into a single structured description
+
     final_reason = " ".join(reasons)
     
     # 5. Return the structured strategy dictionary

@@ -17,6 +17,7 @@ This document is the engineering source of truth for future implementation. It d
 - **Target** means behavior that does not exist yet and must be built in the phase named beside it.
 - If this document and the code disagree about what exists today, the code wins for “what is”, and this document wins for “what to build”. Reconcile the difference in the phase report. Do not silently invent a third design.
 - Financial words are reserved. **Verified recovered revenue** means the sum of Razorpay payments whose status was confirmed as `captured` after signature verification and a server-side payment fetch. **Simulated recovered revenue** means an outcome from `ml/src/simulate_recovery.py` or the in-memory timer. These numbers must never share a label, a database column, or a dashboard total.
+- **Phase 2 repair addendum** — If Phase 2 was marked verified before pre-commit repairs landed, read [Phase 2 Repair Addendum — Pre-Commit Fixes](#phase-2-repair-addendum--pre-commit-fixes). That section is mandatory before the first Phase 2 commit. It does not start Phase 3.
 
 ## Assumptions
 
@@ -2127,6 +2128,232 @@ Phase 1 accepted. The terminal-state helpers exist and are reused by ingest.
 
 ---
 
+# Phase 2 Repair Addendum — Pre-Commit Fixes
+
+This addendum amends Phase 2 only. It does not replace Sections 1–13, Phase 2 tasks above, or Phase 3 onward. Implement every item here in the same Phase 2 codebase (SQLite, Prisma, existing routes). **Do not commit Phase 2 until every acceptance criterion in §7 of this addendum passes.** Do not start Phase 3, an operator console, authentication, Redis, PostgreSQL, or other new backends.
+
+**Preserved invariants (non-negotiable):**
+
+- `markCaptured` remains the only path that sets `RecoveryCase.status = recovered` and updates `verifiedRecoveredPaise`.
+- Verified revenue still requires Razorpay `fetchPayment` status `captured` and a matching amount in paise.
+- Phase 1 landing simulation, terminal states, and separated accounting counters remain unchanged in behavior.
+- Live Razorpay verification may be recorded in the phase report only when a human run with test keys actually occurred; fake-gateway tests alone are not live verification.
+
+---
+
+## 1. Recovery case concurrency
+
+### 1.1 Problem
+
+Concurrent failure signals (browser trigger, webhook, or two webhooks with different `providerEventId` before either transaction commits) can both pass an application-level “existing case” check and insert **more than one** `RecoveryCase` for the same failed checkout order.
+
+### 1.2 Requirements
+
+1. **One case per failed origin order.** At most one `RecoveryCase` may exist whose `originPaymentId` refers to the `Payment` row for the shopper’s original Razorpay order (the order created by `POST /api/payment/create-order` for that checkout), regardless of whether the failure arrived via `source: browser` or `source: webhook`.
+2. **Database enforcement.** Add a Prisma migration that enforces this invariant wherever SQLite allows (preferred: `@@unique` on `RecoveryCase.originPaymentId`, or an equivalent unique index in migration SQL). Application checks alone are insufficient.
+3. **Safe conflict handling.** `ingestFailure` (and any caller) must treat unique-constraint violations on that key as **idempotent success**: return the existing case id, `duplicate: true`, and must not create a second `PaymentFailure` row for the same logical failure when deduplication applies (align with Section 8.5 and existing webhook idempotency on `PaymentFailure.rawEventId` where present).
+4. **Transaction ordering.** The “find existing case / insert case” path must be race-safe: use a single transaction with appropriate isolation, or insert-first and catch `P2002`, then reload the winner row. Do not rely on a read outside a transaction followed by an insert inside it.
+5. **Tests.** Add automated tests that simulate concurrent ingestion (parallel `ingestFailure` or parallel HTTP calls to `/api/recovery/trigger` and/or webhook processing) for the same `razorpay_order_id` and assert exactly **one** `RecoveryCase` and stable case id across callers.
+
+### 1.3 Out of scope
+
+- Multi-merchant case isolation tests belong to Phase 4; this addendum only requires the demo merchant path.
+
+---
+
+## 2. Recovery payment failure handling
+
+### 2.1 Problem
+
+When a **recovery** `Payment` row (created by `runDueAttempts`, with `recoveryCaseId` set and `parentPaymentId` pointing at the origin payment) fails, `ingestFailure` must not treat that payment as a new “origin” failure and open a **second** case.
+
+### 2.2 Requirements
+
+1. **Route failures to the existing case.** If the failed Razorpay order id belongs to a `Payment` with non-null `recoveryCaseId`, the handler must update that **existing** `RecoveryCase` and linked `RecoveryAttempt` rows. It must **not** call the “open new case” branch and must **not** set `RecoveryCase.originPaymentId` to the recovery payment’s id.
+2. **Align with Section 8.7.** Implement the failure, reopen, stop, and attempts-exhausted transitions already described in Section 8.7 and Section 8.8:
+   - A failed recovery payment sets the relevant `RecoveryAttempt` to `failed` (with an auditable reason).
+   - The case returns to `open` when policy still allows further attempts; otherwise `stopped` with `closeReason: attempts_exhausted` (or the exact string already used in Section 8.7 prose).
+   - Do **not** change `verifiedRecoveredPaise` or set `recovered` on failure.
+   - Pending attempts remain governed by policy `maxAttempts` and cooldown rules already stored on `MerchantPolicy`.
+3. **Webhook and browser parity.** Both `payment.failed` webhooks and `/api/recovery/trigger` (if it can ever reference a recovery order id) must behave consistently; prefer a single internal function for “payment failed for order id X”.
+4. **Regression tests.** Add tests that:
+   - Create a case, run a worker tick to produce a recovery order payment row, deliver `payment.failed` for that recovery order id (fixture or fake gateway), and assert **case count remains 1**, case id unchanged, attempt status updated, and no new `RecoveryCase` row.
+
+---
+
+## 3. Create-order idempotency
+
+### 3.1 Problem
+
+`Idempotency-Key` handling is check-then-act outside a transaction. Gateway success with a failed local update can orphan rows. Concurrent requests with the same key can create duplicate Razorpay orders.
+
+### 3.2 Requirements
+
+1. **Concurrency-safe idempotency.** Two concurrent `POST /api/payment/create-order` requests with the same `Idempotency-Key` and the same amount must result in **one** Razorpay `createOrder` call, **one** `Payment` row, and the same `order_id` returned to both clients.
+2. **Conflict semantics unchanged.** Same key + different amount still returns **409** (`IDEMPOTENCY_CONFLICT`) as in Section 5.1.
+3. **Gateway failure.** If Razorpay `createOrder` fails after a local `Payment` insert, the implementation must not leave a permanent orphan `Payment` in `created` with a stale `local_*` order id without a documented cleanup or compensating delete in the same request (Section 8.2 receipt rules preserved).
+4. **Uncertain gateway responses.** If the gateway outcome is unknown (timeout after request sent), the idempotent retry must not create a second Razorpay order for the same `Payment` id / receipt; use the persisted row and receipt idempotency per Section 8.2 (`rcpt_${paymentRecordId}`).
+5. **Tests.**
+   - Concurrent create-order with the same idempotency key (parallel requests).
+   - Simulated gateway `createOrder` throw: assert no orphan `Payment` or assert explicit rollback documented in test name.
+   - Existing tests for same/different amount remain green.
+
+---
+
+## 4. Security
+
+### 4.1 Requirements
+
+1. **Rate limit `/api/payment/verify`.** Apply the same in-memory sliding-window limiter pattern used on `create-order` and `recovery/trigger` (Section 5 and Phase 2 security notes). Return **429** with the existing `RATE_LIMITED` error shape when exceeded.
+2. **`WORKER_SECRET` comparison.** `POST /api/internal/worker/tick` must compare the `x-worker-secret` header to `process.env.WORKER_SECRET` with a **timing-safe** compare (same approach as checkout/webhook HMAC compares: equal length, then `crypto.timingSafeEqual`). Reject missing or wrong secrets with **401**.
+3. **Fake gateway signatures.** In `fake-razorpay-gateway.ts`, use timing-safe comparison for webhook (and checkout if applicable) signature verification in tests, matching production behavior.
+4. **Unchanged (must stay as-is).**
+   - Webhook route reads **raw body** for HMAC verification before JSON parse.
+   - Live gateway `verifyWebhookSignature` uses HMAC on raw body and timing-safe compare.
+   - Invalid webhook signatures return **400**, do **not** insert `WebhookEvent`, do **not** open cases.
+   - `redactWebhookPayload` before persisting `WebhookEvent.payloadJson`; prohibited keys must not appear in stored JSON.
+
+---
+
+## 5. Missing tests
+
+Add or extend Vitest coverage (fake gateway, `DATABASE_URL=file:./test.db`, existing global setup). Section 11.2 remains the baseline; this list is **additional** repair coverage.
+
+| # | Scenario | Expected |
+| --- | --- | --- |
+| T1 | Concurrent duplicate failure ingestion (same origin order) | Exactly one `RecoveryCase`; concurrent callers get same case id or `duplicate: true` |
+| T2 | Recovery payment failure | No new case; existing case updated; attempt `failed`; case `open` or `stopped` per policy |
+| T3 | Concurrent create-order, same `Idempotency-Key` | One gateway create; one payment row; identical `order_id` |
+| T4 | Gateway order creation failure | No orphan inconsistent `Payment` (or explicit rollback verified) |
+| T5 | Verify HTTP: captured payment **with** recovery case linked | Case `recovered`, `verifiedRecoveredPaise` set; `fetchPayment` mocked |
+| T6 | Verify HTTP: captured payment **without** any case | Payment `captured`; **zero** cases; verified recovery paise unchanged at case level |
+| T7 | Webhook HTTP: invalid signature | **400**; zero cases; zero new `WebhookEvent` rows |
+| T8 | Webhook `payment.captured` after failure with pending attempt | Case `recovered`; pending/running/awaiting attempts become `skipped` / `ALREADY_CAPTURED` |
+| T9 | Concurrent worker double-claim | Two parallel ticks or parallel claims on one attempt; at most one succeeds in creating a recovery order |
+| T10 | Retry exhaustion | Fourth execution blocked when `maxAttempts` is 3 (policy from seed) |
+| T11 | Awaiting timeout | Attempt in `awaiting_payment` older than 24h marked `failed` with `AWAITING_TIMEOUT` on tick (Section 8.8) |
+
+Tests must assert **database state**, not only HTTP status codes. Do not call live Razorpay.
+
+---
+
+## 6. Documentation
+
+Add operational documentation to **`README.md`** (or a linked `docs/phase2-operations.md` referenced from the README). The following topics are required before Phase 2 commit:
+
+### 6.1 Environment variables
+
+Document every variable in `.env.example` with purpose and safe defaults for local dev:
+
+- `DATABASE_URL`
+- `RAZORPAY_KEY_ID`, `RAZORPAY_KEY_SECRET`, `RAZORPAY_WEBHOOK_SECRET`
+- `RAZORPAY_USE_FAKE`
+- `FASTAPI_URL`
+- `RECOVERY_WORKER_ENABLED`, `WORKER_SECRET`, `INTERNAL_WORKER_BASE_URL` (if used)
+- Clarify that secrets must not use `NEXT_PUBLIC_` and must not be committed.
+
+### 6.2 SQLite database configuration
+
+- Default `file:./dev.db` under `prisma/`
+- Gitignored `*.db` files
+- Single-writer / concurrency limitations for local demo
+
+### 6.3 Clean database migration
+
+Document commands for an empty database:
+
+```bash
+npx prisma migrate deploy
+```
+
+and for local iterative dev:
+
+```bash
+npm run db:migrate
+```
+
+State that tests use `file:./test.db` via Vitest env.
+
+### 6.4 Database seeding
+
+```bash
+npm run db:seed
+# or: npx prisma db seed
+```
+
+Explain that create-order and ingest paths require the demo merchant, customer, and active policy from `prisma/seed.ts`.
+
+### 6.5 Starting the Next.js application
+
+```bash
+npm install
+npm run dev
+# production: npm run build && npm start
+```
+
+Note dependency on migrated + seeded DB for payment routes.
+
+### 6.6 Starting the persistent worker
+
+Document **both** mechanisms:
+
+1. **`npm run worker`** — standalone loop calling `runDueAttempts` (preferred when the browser or Next dev server is closed).
+2. **`RECOVERY_WORKER_ENABLED=true`** + `WORKER_SECRET` + `instrumentation.ts` — in-process tick only while the Next.js server process stays alive.
+
+### 6.7 Worker scheduling and deployment limitations
+
+- Closing the **browser** does not stop recovery; stopping the **Node process** does unless the standalone worker runs separately.
+- `instrumentation.ts` is unsuitable for short-lived serverless instances.
+- In-memory rate limits are per process.
+- SQLite is not multi-instance production storage; Postgres remains a later migration, not part of this repair.
+
+---
+
+## 7. Acceptance criteria
+
+Each row is **Pass** only when verified in the repair PR. **Fail** any row blocks Phase 2 commit.
+
+| ID | Repair area | Pass criteria |
+| --- | --- | --- |
+| R1 | Case concurrency | Unique constraint (or equivalent) on origin case key; concurrent ingestion test T1 green; never two cases for one origin order |
+| R2 | Recovery payment failure | T2 green; webhook/trigger cannot open case on recovery order id |
+| R3 | Create-order idempotency | T3–T4 green; no duplicate Razorpay orders for same idempotency key |
+| R4 | Security | Verify rate limited; worker secret timing-safe; fake gateway timing-safe; webhook raw-body HMAC unchanged |
+| R5 | Test suite | T1–T11 covered; `npm test` exit **0** |
+| R6 | Documentation | README (or linked doc) contains §6.1–6.7 |
+| R7 | Build | `npm run build` exit **0** |
+| R8 | Phase 1 regression | Existing Phase 1 tests (`accounting`, `present-decision`, `compare-signature`, trigger simulation behavior) still pass |
+| R9 | Architecture boundary | No Phase 3+ routes, auth, Redis, or Postgres introduced |
+| R10 | Verified revenue | No new code path sets `recovered` without `markCaptured` + captured fetch; repair tests must not weaken this |
+
+### Required commands (record exit codes in Section 14 change log when repairs are verified)
+
+```bash
+git diff --check
+npm test
+npm run build
+```
+
+Optional manual (record honestly in change log):
+
+- Razorpay test keys: one failed checkout → one case id in DB (not satisfied by fake gateway alone).
+
+### Phase 2 status until repairs land
+
+Section 14 may list Phase 2 as **Blocked** or **In progress** until R1–R10 pass. Do not mark Phase 2 **Verified** for commit until this addendum is satisfied.
+
+---
+
+## Strict boundaries (repair scope)
+
+- **Phase 2 only.** No Phase 3 decision-engine unification, no console UI, no `next-auth`.
+- **Preserve architecture:** Next.js routes, Prisma SQLite, FastAPI HTTP ML, fake gateway for tests, `markCaptured` gate.
+- **No new infrastructure:** No Redis, PostgreSQL, queues, or second deployable service.
+- **Phase 1 intact:** Landing simulation and in-memory accounting bridge on trigger remain.
+- **No weakened accounting:** Simulated and verified counters stay separate; timers must not mark recovered.
+
+---
+
 ## PHASE 3: Unified Recovery Intelligence
 
 ### 1. Objective
@@ -2594,11 +2821,11 @@ Update this section at the end of each phase. Do not mark a later phase complete
 | Phase | Status | Updated | Evidence |
 | --- | --- | --- | --- |
 | 1. Truthful recovery simulation | Verified | 2026-10-30 | `npm test` exit 0 (8 tests). Truthful simulation, accounting split, signature length fix |
-| 2. Persistence and payment reliability | Not started | 2026-10-30 | Blocked on Phase 1 acceptance |
-| 3. Unified recovery intelligence | Not started | 2026-10-30 | Blocked on Phase 2 acceptance |
-| 4. Operator console | Not started | 2026-10-30 | Blocked on Phase 3 acceptance |
-| 5. ML improvements | Not started | 2026-10-30 | Blocked on Phase 4 acceptance for the analytics panel. Training rows depend on Phase 2 captures |
-| 6. Product maturity | Not started | 2026-10-30 | Blocked on Phase 5 acceptance |
+| 2. Persistence and payment reliability | Verified | 2026-11-01 | Phase 2 + repair addendum: `git diff --check` clean; `npm test` exit 0 (33 tests); `npm run build` exit 0; unique `RecoveryCase.originPaymentId`; repair tests T1–T11; `docs/phase2-operations.md` |
+| 3. Unified recovery intelligence | Verified | 2026-11-01 | `ml/.venv/bin/python -m pytest ml/tests` exit 0 (6 tests); `npm test` exit 0 (35 tests); `npm run build` exit 0; Python guardrails + rule glossary; ingest integration for `CUSTOMER_CANCELLED` |
+| 4. Operator console | Verified | 2026-11-01 | Auth.js + User/Membership; `/app` console + `/api/app/**`; `npm test` exit 0 (40 tests); `npm run build` exit 0; `pytest ml/tests` exit 0 (6 tests) |
+| 5. ML improvements | Verified | 2026-11-01 | `TrainingExample` + Razorpay-fetch rows; calibration `not_adopted`; `npm test` exit 0 (44 tests); `pytest ml/tests` exit 0 (13 tests); `npm run build` exit 0 |
+| 6. Product maturity | Verified | 2026-11-01 | Policy versioning (`PUT /api/app/settings/policy`); approval queue + approve/reject; `needs_approval` guardrail; suggested method rule; analytics captures-by-reason; `npm test` exit 0 (50 tests); `pytest ml/tests` exit 0 (16 tests); `npm run build` exit 0 |
 
 Allowed status values: `Not started`, `In progress`, `Blocked`, `Completed`, `Verified`.
 
@@ -2622,7 +2849,7 @@ Copy one block into the change log when a phase starts.
 - [ ] In progress
 - [ ] Blocked
 - [ ] Completed
-- [ ] Verified
+- [x] Verified
 
 ### Phase 3 checklist
 
@@ -2630,7 +2857,7 @@ Copy one block into the change log when a phase starts.
 - [ ] In progress
 - [ ] Blocked
 - [ ] Completed
-- [ ] Verified
+- [x] Verified
 
 ### Phase 4 checklist
 
@@ -2638,7 +2865,7 @@ Copy one block into the change log when a phase starts.
 - [ ] In progress
 - [ ] Blocked
 - [ ] Completed
-- [ ] Verified
+- [x] Verified
 
 ### Phase 5 checklist
 
@@ -2646,7 +2873,7 @@ Copy one block into the change log when a phase starts.
 - [ ] In progress
 - [ ] Blocked
 - [ ] Completed
-- [ ] Verified
+- [x] Verified
 
 ### Phase 6 checklist
 
@@ -2654,7 +2881,7 @@ Copy one block into the change log when a phase starts.
 - [ ] In progress
 - [ ] Blocked
 - [ ] Completed
-- [ ] Verified
+- [x] Verified
 
 ## 14.3 Change log
 
@@ -2662,6 +2889,12 @@ Copy one block into the change log when a phase starts.
 | --- | --- | --- | --- | --- |
 | 2026-10-30 | Specification | Written | Implementation spec added from the architecture review. No application code changed | None |
 | 2026-10-30 | Phase 1 | Verified | Truthful in-memory outcomes, separated revenue labels, Python strategy names, Vitest suite, checkout dismiss guard | Live Razorpay checkout not exercised in this session (keys/FastAPI optional) |
+| 2026-10-30 | Phase 2 | Verified | SQLite/Prisma persistence, Razorpay webhooks with signature + idempotency, DB-backed worker, markCaptured-only verified revenue, Section 11.2 tests | Manual Razorpay test checkout not run (fake-gateway tests used). Prisma pinned to 5.22.0 (8.x RC CLI incompatible with migrate dev workflow) |
+| 2026-11-01 | Phase 2 repair | Verified | Repair addendum R1–R10: case uniqueness migration, recovery-order failure path, idempotent create-order, verify rate limit, timing-safe secrets, tests/repair-addendum.test.ts, ops docs | Manual Razorpay checkout still not run (fake gateway only) |
+| 2026-11-01 | Phase 3 | Verified | Python `guardrails.py` + rule ids on decision/strategy; `/predict` context + guardrail payload; ingest persists guardrail; landing demo labeled; `ml/tests` + `tests/rule-glossary.test.ts` + `tests/guardrails-ingest.test.ts`; `npm test` 35 passed; `pytest ml/tests` 6 passed; `npm run build` ok | Live FastAPI + Razorpay checkout not exercised; use project venv `ml/.venv` for pytest |
+| 2026-11-01 | Phase 4 | Verified | Operator console (`/app`), Auth.js login, case/analytics/audit/settings APIs, warm palette tokens, `tests/case-api-auth.test.ts` + `tests/revenue-figures.test.tsx`; `npm test` 40 passed; `npm run build` ok | Full browser walkthrough of login→case→checkout not run in CI; set `SEED_ADMIN_EMAIL` / `SEED_ADMIN_PASSWORD` (+ optional `SEED_VIEWER_*`) for local sign-in |
+| 2026-11-01 | Phase 5 | Verified | `TrainingExample` migration; Razorpay-fetch training rows; `npm run export:training`; ML scripts (`calibrate_failure_model.py`, `evaluate_against_baseline.py`, `train_from_examples.py`); analytics model panel from `model_metadata.json`; calibration **not_adopted** (Brier 0.1166→0.1169); `npm test` 44 passed; `pytest ml/tests` 13 passed; `npm run build` ok | Verified retrain not run (needs 200 live rows); analytics browser pass not recorded in CI |
+| 2026-11-01 | Phase 6 | Verified | Editable policy versions; `APPROVAL_REQUIRED` → `needs_approval`; approve/reject APIs; suggested payment method (rule, not model); cancelled-subscription guard; approvals page + analytics captures-by-reason; `tests/policy-approval.test.ts`; `npm test` 50 passed; `pytest ml/tests` 16 passed; `npm run build` ok | Browser walkthrough (policy save → approval → analytics) not run in this session; cases left in `needs_approval` after rollback need manual SQL stop per spec |
 
 Template for the next row:
 

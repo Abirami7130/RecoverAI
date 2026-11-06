@@ -2,7 +2,7 @@ import { RecoveryDecision, RecoveryStrategy } from '@/lib/types';
 
 export interface FastApiPredictPayload {
   prediction: {
-    failure_probability: number;
+    failure_probability: number | null;
     risk_level: string;
   };
   decision: {
@@ -51,9 +51,14 @@ export function presentRecoveryDecision(
   fastApiResult: FastApiPredictPayload,
   errorCode: string,
   errorDescription: string,
-  normalizedReason: string
+  normalizedReason: string,
+  ruleIds: string[] = []
 ): RecoveryDecision {
-  const strategy = asStrategy(fastApiResult.strategy.strategy);
+  const guardrail = (fastApiResult as { guardrail?: { final_action?: string } })
+    .guardrail;
+  const strategy = asStrategy(
+    guardrail?.final_action ?? fastApiResult.strategy.strategy
+  );
   const actionLabel =
     STRATEGY_LABELS[strategy] ??
     STRATEGY_LABELS[fastApiResult.decision.decision] ??
@@ -77,10 +82,12 @@ export function presentRecoveryDecision(
     actionLabel,
     retryDelayMs,
     useAlternateRoute,
-    failureProbability: fastApiResult.prediction.failure_probability,
+    failureProbability:
+      fastApiResult.prediction.failure_probability ?? undefined,
     recoveryProbability: null,
     recoveryProbabilitySource: 'not_trained',
     simulatedOutcome: fastApiResult.outcome.outcome,
     simulatedRecoveryProbability: fastApiResult.outcome.simulated_recovery_probability,
+    ruleIds,
   };
 }

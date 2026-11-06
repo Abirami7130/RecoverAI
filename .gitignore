@@ -1,8 +1,13 @@
 .env.local
+.env
 .next/
 node_modules/
 .venv/
+ml/.venv/
 __pycache__/
 *.pyc
 .DS_Store
 *.tsbuildinfo
+*.db
+*.db-journal
+data/training/

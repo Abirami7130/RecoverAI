@@ -1,10 +1,23 @@
 import pandas as pd
 import joblib
 import os
+import json
 
 # 1. Define the absolute path to the saved pipeline relative to this script
 current_dir = os.path.dirname(os.path.abspath(__file__))
 MODEL_PATH = os.path.join(current_dir, "..", "models", "recoverai_failure_model.joblib")
+METADATA_PATH = os.path.join(current_dir, "..", "models", "model_metadata.json")
+
+DEFAULT_MODEL_VERSION = "gb-2026-10-30-synthetic"
+
+
+def _load_model_version() -> str:
+    try:
+        with open(METADATA_PATH, encoding="utf-8") as handle:
+            meta = json.load(handle)
+        return str(meta.get("model_version") or DEFAULT_MODEL_VERSION)
+    except (OSError, json.JSONDecodeError):
+        return DEFAULT_MODEL_VERSION
 
 # Load the model globally so it only loads once when this file is imported 
 # by a future backend server (loading models is slow, doing it once is efficient).
@@ -46,12 +59,12 @@ def predict_failure(transaction_data):
     # Convert the raw dictionary into a Pandas DataFrame with exactly one row.
     # Wrapping the dictionary in a list [transaction_data] tells pandas it is a single record.
     df = pd.DataFrame([transaction_data])
-    
-    # Pass the raw DataFrame into the saved scikit-learn Pipeline.
-    # The Pipeline automatically applies StandardScaler and OneHotEncoder, 
-    # then passes the cleanly formatted numbers to the Gradient Boosting model.
-    # predict_proba returns an array like [[probability_success, probability_failure]].
-    # We want the second value (index 1), which is the probability of failure.
+
+    if pipeline is None:
+        raise FileNotFoundError(
+            f"Model pipeline not loaded. Expected artifact at {MODEL_PATH}"
+        )
+
     failure_prob = pipeline.predict_proba(df)[0][1]
     
     # Determine the risk level based on our evaluated decision threshold
@@ -66,7 +79,10 @@ def predict_failure(transaction_data):
     # Return a clean dictionary to whatever backend system called this function
     return {
         "failure_probability": float(failure_prob),
-        "risk_level": risk_level
+        "risk_level": risk_level,
+        "model_version": _load_model_version(),
+        "recovery_probability": None,
+        "recovery_probability_source": "not_trained",
     }
 
 

@@ -1,5 +1,9 @@
 import { ProviderMetrics, RecoveryDecision, RiskLevel } from '../types';
 
+/**
+ * Legacy mock risk mapper for the landing animation only.
+ * Product recovery actions come from Python `/predict` after Phase 3.
+ */
 export function makeRecoveryDecision(
   metrics: ProviderMetrics,
   riskScore: number,

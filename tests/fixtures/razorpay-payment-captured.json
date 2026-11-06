@@ -1,0 +1,17 @@
+{
+  "id": "evt_test_captured_001",
+  "event": "payment.captured",
+  "created_at": 1730260900,
+  "payload": {
+    "payment": {
+      "entity": {
+        "id": "pay_test_captured_001",
+        "order_id": "order_replace_me",
+        "amount": 49900,
+        "currency": "INR",
+        "status": "captured",
+        "method": "upi"
+      }
+    }
+  }
+}
